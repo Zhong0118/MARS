@@ -1,0 +1,42 @@
+[
+  {
+    "message_id": "msg_001",
+    "tenant_id": "tenant_demo",
+    "project_id": "carbon_platform",
+    "chat_id": "chat_demo",
+    "user_id": "u_001",
+    "user_name": "Zhang San",
+    "time": "2026-05-01T10:00:00",
+    "content": "Should we go directly with Vue plus FastAPI for phase one?"
+  },
+  {
+    "message_id": "msg_002",
+    "tenant_id": "tenant_demo",
+    "project_id": "carbon_platform",
+    "chat_id": "chat_demo",
+    "user_id": "u_002",
+    "user_name": "Li Si",
+    "time": "2026-05-01T10:02:00",
+    "content": "The timeline is tight and our current data processing code is all Python."
+  },
+  {
+    "message_id": "msg_003",
+    "tenant_id": "tenant_demo",
+    "project_id": "carbon_platform",
+    "chat_id": "chat_demo",
+    "user_id": "u_003",
+    "user_name": "Wang Wu",
+    "time": "2026-05-01T10:04:00",
+    "content": "Streamlit would probably be faster for the demo."
+  },
+  {
+    "message_id": "msg_004",
+    "tenant_id": "tenant_demo",
+    "project_id": "carbon_platform",
+    "chat_id": "chat_demo",
+    "user_id": "u_004",
+    "user_name": "Teacher",
+    "time": "2026-05-01T10:06:00",
+    "content": "That works. Use Streamlit for the first demo and revisit Vue plus FastAPI later."
+  }
+]

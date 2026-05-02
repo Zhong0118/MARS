@@ -1,0 +1,12 @@
+[
+  {
+    "message_id": "msg_101",
+    "tenant_id": "tenant_demo",
+    "project_id": "carbon_platform",
+    "chat_id": "chat_demo",
+    "user_id": "u_004",
+    "user_name": "Teacher",
+    "time": "2026-05-08T09:00:00",
+    "content": "Correction: phase one should move to Vue plus FastAPI because the formal demo needs a more engineered frontend."
+  }
+]
