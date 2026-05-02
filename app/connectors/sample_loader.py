@@ -4,6 +4,7 @@ from __future__ import annotations
 
 This module is the MVP adapter boundary. It knows the sample JSON format, while
 the rest of the system only consumes internal models such as RawEvent.
+外部 JSON 转内部 RawEvent
 """
 
 import json

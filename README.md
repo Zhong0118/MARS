@@ -6,16 +6,16 @@ It is designed to turn fragmented project history from Feishu chats, notes,
 meeting discussions, and agent inputs into structured, governable memory:
 decisions, facts, procedures, risks, preferences, and onboarding context.
 
+
 MARS is not:
 - a simple chat search tool
 - a plain RAG pipeline
 - an internal OpenClaw memory folder
 
 MARS is:
-- an independent memory management engine
-- a provenance-aware raw ledger plus memory object system
-- a service that can later be called by OpenClaw, Feishu bots, CLI tools, or
-  other agents
+- an independent memory management engine 
+- a provenance-aware raw ledger plus memory object system 
+- a service that can later be called by OpenClaw, Feishu bots, CLI tools, or other agents 
 
 ## Project Status
 
@@ -289,8 +289,7 @@ The local MVP does not implement:
 - [AGENTS.md](AGENTS.md)
 
 ## Design Summary
-
-If you want the shortest mental model of MARS, use this:
+the shortest mental model of MARS:
 
 ```text
 LLM does semantics.

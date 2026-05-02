@@ -34,6 +34,51 @@ MemoryStatus = Literal[
     "rejected",
 ]
 
+MemoryType = Literal[
+    "decision",
+    "fact",
+    "procedure",
+    "risk",
+    "preference",
+    "episode",
+    "skill",
+]
+
+MemoryScope = Literal[
+    "user",
+    "team",
+    "project",
+    "org",
+]
+
+MemoryRelation = Literal[
+    "duplicate",
+    "support",
+    "update",
+    "conflict",
+    "supersedes",
+    "unrelated",
+]
+
+PolicyActionType = Literal[
+    "READ",
+    "WRITE",
+    "UPDATE",
+    "DELETE",
+    "FORGET",
+    "PUSH",
+    "RECONCILE",
+    "BENCHMARK",
+    "NOOP",
+]
+
+PushChannel = Literal[
+    "group",
+    "private",
+    "bitable",
+    "cli",
+]
+
 
 class RawEvent(BaseModel):
     """Append-only source event stored in the raw ledger."""
@@ -64,8 +109,9 @@ class MemoryObject(BaseModel):
     """Structured memory extracted from one or more raw events."""
 
     memory_id: str = Field(default_factory=lambda: make_id("mem"))
-    memory_type: str
-    scope: str
+    version_group_id: str | None = None
+    memory_type: MemoryType
+    scope: MemoryScope
     tenant_id: str | None = None
     project_id: str | None = None
     user_id: str | None = None
@@ -76,9 +122,9 @@ class MemoryObject(BaseModel):
     objections: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     status: MemoryStatus = "pending"
-    version: int = 1
-    confidence: float = 0.0
-    importance: int = 3
+    version: int = Field(default=1, ge=1)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    importance: int = Field(default=3, ge=1, le=5)
     valid_time_start: str
     valid_time_end: str | None = None
     transaction_time: str
@@ -103,9 +149,9 @@ class MemoryEdge(BaseModel):
     edge_id: str = Field(default_factory=lambda: make_id("edge"))
     source_memory_id: str
     target_memory_id: str
-    relation_type: str
+    relation_type: MemoryRelation
     reason: str | None = None
-    confidence: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     created_at: str = Field(default_factory=utc_now_iso)
 
 
@@ -125,13 +171,18 @@ class PolicyAction(BaseModel):
     """Audit record for state-changing policy or reconciliation decisions."""
 
     action_id: str = Field(default_factory=lambda: make_id("act"))
-    action_type: str
+    action_type: PolicyActionType
+    tenant_id: str | None = None
     project_id: str | None = None
+    chat_id: str | None = None
+    thread_id: str | None = None
+    actor_id: str | None = None
+    memory_id: str | None = None
     input_payload: dict[str, Any] = Field(default_factory=dict)
     candidate_payload: dict[str, Any] = Field(default_factory=dict)
     decision: str
     reason: str
-    confidence: float = 0.0
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     created_at: str = Field(default_factory=utc_now_iso)
 
 
@@ -142,7 +193,101 @@ class EvidencePack(BaseModel):
     title: str
     content: str
     status: MemoryStatus
-    score: float = 0.0
+    score: float = Field(default=0.0, ge=0.0)
     source_event_ids: list[str]
     rationale: list[str] = Field(default_factory=list)
     objections: list[str] = Field(default_factory=list)
+    topic: str | None = None
+    project_id: str | None = None
+
+
+class PushLog(BaseModel):
+    """Audit record for proactive recall, reminders, and push outcomes."""
+
+    push_id: str = Field(default_factory=lambda: make_id("push"))
+    trigger_type: str
+    tenant_id: str | None = None
+    project_id: str | None = None
+    chat_id: str | None = None
+    user_id: str | None = None
+    memory_id: str
+    push_channel: PushChannel
+    push_content: str
+    should_push: bool = True
+    policy_action_id: str | None = None
+    user_feedback: str | None = None
+    created_at: str = Field(default_factory=utc_now_iso)
+
+
+class Tenant(BaseModel):
+    """Top-level workspace or organization container."""
+
+    tenant_id: str
+    tenant_name: str | None = None
+    source_type: str | None = None
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=utc_now_iso)
+    updated_at: str = Field(default_factory=utc_now_iso)
+
+
+class User(BaseModel):
+    """Person or service account participating in collaboration events."""
+
+    user_id: str
+    tenant_id: str | None = None
+    display_name: str | None = None
+    source_type: str | None = None
+    source_user_id: str | None = None
+    open_id: str | None = None
+    union_id: str | None = None
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=utc_now_iso)
+    updated_at: str = Field(default_factory=utc_now_iso)
+
+
+class Chat(BaseModel):
+    """Chat or conversation container such as a group, DM, or thread root."""
+
+    chat_id: str
+    tenant_id: str | None = None
+    chat_name: str | None = None
+    chat_type: str | None = None
+    source_type: str | None = None
+    source_chat_id: str | None = None
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=utc_now_iso)
+    updated_at: str = Field(default_factory=utc_now_iso)
+
+
+class Project(BaseModel):
+    """Business project scope used for memory grouping and retrieval."""
+
+    project_id: str
+    tenant_id: str | None = None
+    project_name: str | None = None
+    description: str | None = None
+    status: str | None = None
+    created_at: str = Field(default_factory=utc_now_iso)
+    updated_at: str = Field(default_factory=utc_now_iso)
+
+
+class ProjectChat(BaseModel):
+    """Mapping between a project and a related chat."""
+
+    id: str = Field(default_factory=lambda: make_id("pc"))
+    project_id: str
+    chat_id: str
+    relation_type: str | None = None
+    created_at: str = Field(default_factory=utc_now_iso)
+
+
+class ChatMembership(BaseModel):
+    """Membership relation for users participating in chats."""
+
+    id: str = Field(default_factory=lambda: make_id("cm"))
+    chat_id: str
+    user_id: str
+    role: str | None = None
+    joined_at: str | None = None
+    left_at: str | None = None
+    created_at: str = Field(default_factory=utc_now_iso)
