@@ -1,0 +1,62 @@
+[
+  {
+    "message_id": "msg_401",
+    "tenant_id": "tenant_demo",
+    "project_id": "carbon_platform",
+    "chat_id": "chat_demo",
+    "user_id": "u_001",
+    "user_name": "Zhang San",
+    "time": "2026-05-09T19:00:00",
+    "content": "For the tech route, I still think Streamlit is faster for the first demo."
+  },
+  {
+    "message_id": "msg_402",
+    "tenant_id": "tenant_demo",
+    "project_id": "carbon_platform",
+    "chat_id": "chat_demo",
+    "user_id": "u_002",
+    "user_name": "Li Si",
+    "time": "2026-05-09T19:03:00",
+    "content": "Timeline-wise, we only have ten days left before the teacher review."
+  },
+  {
+    "message_id": "msg_403",
+    "tenant_id": "tenant_demo",
+    "project_id": "carbon_platform",
+    "chat_id": "chat_demo",
+    "user_id": "u_003",
+    "user_name": "Wang Wu",
+    "time": "2026-05-09T19:05:00",
+    "content": "Back to the tech route: Vue plus FastAPI would look more polished, but slower."
+  },
+  {
+    "message_id": "msg_404",
+    "tenant_id": "tenant_demo",
+    "project_id": "carbon_platform",
+    "chat_id": "chat_demo",
+    "user_id": "u_004",
+    "user_name": "Teacher",
+    "time": "2026-05-10T09:00:00",
+    "content": "Another topic: the main risk is that deployment may fail on demo day."
+  },
+  {
+    "message_id": "msg_405",
+    "tenant_id": "tenant_demo",
+    "project_id": "carbon_platform",
+    "chat_id": "chat_demo",
+    "user_id": "u_001",
+    "user_name": "Zhang San",
+    "time": "2026-05-10T09:06:00",
+    "content": "Back to the earlier tech route discussion, Streamlit is still safer for now."
+  },
+  {
+    "message_id": "msg_406",
+    "tenant_id": "tenant_demo",
+    "project_id": "carbon_platform",
+    "chat_id": "chat_demo",
+    "user_id": "u_002",
+    "user_name": "Li Si",
+    "time": "2026-05-11T14:00:00",
+    "content": "Weekly update: frontend demo skeleton is ready and we need a short summary slide."
+  }
+]

@@ -4,34 +4,40 @@ from __future__ import annotations
 在 memory_objects 里做本地关键词检索
 """
 
-import re
 import time
+from pathlib import Path
 
-from app.storage.db import build_evidence_pack, get_connection, insert_retrieval_log, list_memories
+from app.core.query_planner import QueryPlan, QueryPlanner, normalize_query_topic
+from app.core.text_utils import tokenize_query
+from app.storage.db import build_evidence_pack, get_connection, get_memory_usage_counts, insert_retrieval_log, list_memories
 from app.storage.models import EvidencePack, MemoryObject
 
 
 class MemoryRetriever:
     """Search stored memories with lightweight keyword matching."""
 
-    def __init__(self, top_k: int = 5, status_filter: str = "active") -> None:
+    def __init__(self, top_k: int = 5, status_filter: str = "active", db_path: Path | None = None) -> None:
         self.top_k = top_k
         self.status_filter = status_filter
+        self.db_path = db_path
+        self.query_planner = QueryPlanner()
 
     def search(self, query: str, project_id: str | None = None) -> list[EvidencePack]:
         """Search memories and return ranked EvidencePack results."""
         started_at = time.perf_counter()
+        plan = self.query_planner.plan(query, top_k=self.top_k)
         query_tokens = tokenize_query(query)
 
-        with get_connection() as connection:
+        with get_connection(self.db_path) as connection:
             candidate_memories = list_memories(
                 connection,
                 project_id=project_id,
                 status=self.status_filter,
             )
+            usage_counts = get_memory_usage_counts(connection, [memory.memory_id for memory in candidate_memories])
 
             scored_results = [
-                (memory, score_memory(memory, query_tokens, query))
+                (memory, score_memory(memory, query_tokens, query, plan, usage_counts.get(memory.memory_id, 0)))
                 for memory in candidate_memories
             ]
             scored_results = [
@@ -40,8 +46,16 @@ class MemoryRetriever:
                 if score > 0
             ]
             scored_results = deduplicate_scored_results(scored_results)
+            scored_results = apply_plan_priority(scored_results, plan)
             scored_results.sort(
-                key=lambda item: (item[1], item[0].importance, item[0].updated_at, item[0].created_at),
+                key=lambda item: (
+                    plan_priority(item[0], plan),
+                    item[1],
+                    item[0].importance,
+                    item[0].version,
+                    item[0].updated_at,
+                    item[0].created_at,
+                ),
                 reverse=True,
             )
 
@@ -61,7 +75,7 @@ class MemoryRetriever:
                 latency_ms=latency_ms,
                 top_k=self.top_k,
                 status_filter=self.status_filter,
-                retrieval_method="keyword",
+                retrieval_method="hybrid_heuristic",
                 score_items=[
                     {"memory_id": memory.memory_id, "score": score}
                     for memory, score in selected_results
@@ -71,15 +85,14 @@ class MemoryRetriever:
         return evidence_packs
 
 
-def tokenize_query(query: str) -> list[str]:
-    """Extract simple searchable tokens from Chinese/English mixed text."""
-    lowered = query.lower()
-    tokens = re.findall(r"[a-z0-9_+\-#.]+|[\u4e00-\u9fff]+", lowered)
-    return [token for token in tokens if token.strip()]
-
-
-def score_memory(memory: MemoryObject, query_tokens: list[str], query: str) -> float:
-    """Compute a transparent keyword score for one memory."""
+def score_memory(
+    memory: MemoryObject,
+    query_tokens: list[str],
+    query: str,
+    plan: QueryPlan,
+    usage_count: int,
+) -> float:
+    """Compute a transparent hybrid score for one memory."""
     haystacks = {
         "title": (memory.title or "").lower(),
         "content": (memory.content or "").lower(),
@@ -110,7 +123,98 @@ def score_memory(memory: MemoryObject, query_tokens: list[str], query: str) -> f
     if lowered_query and lowered_query in haystacks["title"]:
         score += 3.0
 
+    score += semantic_score(memory, query_tokens, plan)
+    score += value_score(memory, plan)
+    score += frequency_score(usage_count)
+
     return round(score, 3)
+
+
+def semantic_score(memory: MemoryObject, query_tokens: list[str], plan: QueryPlan) -> float:
+    """Score coarse semantic alignment using topics and token overlap."""
+    score = 0.0
+    memory_topic = normalize_query_topic(memory.topic)
+    if plan.normalized_topic and memory_topic == plan.normalized_topic:
+        score += 5.0
+
+    memory_tokens = set(tokenize_query(" ".join([memory.title, memory.content, memory.topic or "", " ".join(memory.tags)])))
+    overlap = len(memory_tokens.intersection(query_tokens))
+    score += min(4.0, overlap * 1.2)
+    return score
+
+
+def value_score(memory: MemoryObject, plan: QueryPlan) -> float:
+    """Score durable value using type priority, status, and confidence."""
+    score = 0.0
+    if memory.memory_type in plan.preferred_types:
+        score += 4.0
+    if memory.memory_type in plan.primary_types:
+        score += 5.0
+    if memory.status == "active":
+        score += 2.0
+    score += min(2.0, memory.confidence * 2.0)
+    score += min(2.0, memory.importance * 0.3)
+
+    if plan.query_type == "current_state":
+        if memory.memory_type == "decision":
+            score += 6.0
+        elif memory.memory_type == "fact":
+            score -= 1.0
+        elif memory.memory_type == "procedure":
+            score += 1.0
+
+        lowered = f"{memory.title} {memory.content}".lower()
+        if any(keyword in lowered for keyword in ["selected", "use ", "will use", "chosen", "instead of", "route"]):
+            score += 3.0
+
+    return score
+
+
+def frequency_score(usage_count: int) -> float:
+    """Score retrieval frequency to favor commonly useful memories without domination."""
+    if usage_count <= 0:
+        return 0.0
+    return min(2.0, usage_count * 0.25)
+
+
+def plan_priority(memory: MemoryObject, plan: QueryPlan) -> int:
+    """Return a coarse priority bucket for sorting under the current query plan."""
+    priority = 0
+    memory_topic = normalize_query_topic(memory.topic)
+
+    if plan.normalized_topic and memory_topic == plan.normalized_topic:
+        priority += 4
+    elif plan.strict_topic and plan.normalized_topic is not None:
+        priority -= 4
+
+    if memory.memory_type in plan.primary_types:
+        priority += 4
+    elif memory.memory_type in plan.preferred_types:
+        priority += 1
+    else:
+        priority -= 2
+
+    if memory.status == "active":
+        priority += 1
+    return priority
+
+
+def apply_plan_priority(
+    scored_results: list[tuple[MemoryObject, float]],
+    plan: QueryPlan,
+) -> list[tuple[MemoryObject, float]]:
+    """Optionally narrow current-state style searches to the most relevant topic bucket."""
+    if not scored_results or not plan.strict_topic or plan.normalized_topic is None:
+        return scored_results
+
+    primary_bucket = [
+        item
+        for item in scored_results
+        if normalize_query_topic(item[0].topic) == plan.normalized_topic
+    ]
+    if primary_bucket:
+        return primary_bucket
+    return scored_results
 
 
 def deduplicate_scored_results(

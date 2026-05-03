@@ -1,0 +1,20 @@
+{
+  "max_gap_minutes": 30,
+  "max_messages_per_window": 8,
+  "lexical_overlap_threshold": 0.2,
+  "force_thread_boundary": true,
+  "shift_markers": [
+    "by the way",
+    "back to",
+    "switch topic",
+    "another topic",
+    "correction:",
+    "however",
+    "also",
+    "in addition",
+    "meanwhile",
+    "separately",
+    "for onboarding",
+    "for reporting"
+  ]
+}

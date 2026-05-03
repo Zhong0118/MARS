@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /c/Users/zx/Desktop/0-Inbox/1-Projects/memory_engine/app/**/*.py /c/Users/zx/Desktop/0-Inbox/1-Projects/memory_engine/scripts/*.py)"
+    ]
+  }
+}

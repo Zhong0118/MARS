@@ -291,3 +291,52 @@ class ChatMembership(BaseModel):
     joined_at: str | None = None
     left_at: str | None = None
     created_at: str = Field(default_factory=utc_now_iso)
+
+
+class DiscussionWindow(BaseModel):
+    """Candidate discussion segment built from contiguous raw events."""
+
+    window_id: str = Field(default_factory=lambda: make_id("win"))
+    tenant_id: str | None = None
+    project_id: str | None = None
+    chat_id: str | None = None
+    thread_id: str | None = None
+    topic_hint: str | None = None
+    split_reason: str | None = None
+    start_time: str
+    end_time: str
+    event_ids: list[str]
+    message_count: int = Field(ge=1)
+    raw_summary: str | None = None
+
+
+class TopicAssignment(BaseModel):
+    """Topic label assigned to a discussion window."""
+
+    topic_id: str = Field(default_factory=lambda: make_id("topic"))
+    label: str
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    assignment_reason: str
+    matched_markers: list[str] = Field(default_factory=list)
+
+
+class ProcessingCursor(BaseModel):
+    """Per-stream cursor used for incremental extraction."""
+
+    cursor_id: str = Field(default_factory=lambda: make_id("cursor"))
+    project_id: str | None = None
+    chat_id: str | None = None
+    last_event_id: str
+    last_event_time: str
+    updated_at: str = Field(default_factory=utc_now_iso)
+
+
+class BenchmarkResult(BaseModel):
+    """Stored benchmark outcome for one evaluation case."""
+
+    result_id: str = Field(default_factory=lambda: make_id("bench"))
+    benchmark_type: str
+    case_id: str
+    metric: dict[str, Any] = Field(default_factory=dict)
+    passed: bool
+    created_at: str = Field(default_factory=utc_now_iso)

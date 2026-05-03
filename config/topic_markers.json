@@ -1,0 +1,8 @@
+{
+  "tech_route": ["streamlit", "vue", "fastapi", "frontend", "backend", "tech route", "architecture", "react", "ui", "api", "stack"],
+  "timeline": ["deadline", "schedule", "timeline", "milestone", "eta", "review", "ship", "launch", "delivery"],
+  "risk": ["risk", "blocker", "issue", "problem", "failure", "deploy", "deployment", "incident", "unstable"],
+  "reporting": ["report", "summary", "weekly update", "status update", "slide", "deck", "recap"],
+  "onboarding": ["onboarding", "new member", "handoff", "context", "background"],
+  "ownership": ["owner", "ownership", "follow up", "follow-up", "responsible", "take care"]
+}

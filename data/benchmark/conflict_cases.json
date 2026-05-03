@@ -4,6 +4,8 @@
     "project_id": "carbon_platform",
     "old_statement": "Use Streamlit for phase one.",
     "new_statement": "Correction: phase one moves to Vue plus FastAPI.",
-    "expected_relation": "supersede"
+    "expected_relation": "supersede",
+    "expected_topic": "tech_route",
+    "required_keywords": ["vue", "fastapi"]
   }
 ]

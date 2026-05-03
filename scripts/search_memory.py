@@ -14,6 +14,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.core.retriever import MemoryRetriever
+from app.core.query_planner import QueryPlanner
+from app.core.answerer import MemoryAnswerer
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,12 +31,20 @@ def main() -> None:
     """Run a keyword search and print compact evidence-rich results."""
     args = build_parser().parse_args()
     retriever = MemoryRetriever(top_k=args.top_k)
+    planner = QueryPlanner()
+    answerer = MemoryAnswerer()
     results = retriever.search(args.query, project_id=args.project_id)
+    plan = planner.plan(args.query, top_k=args.top_k)
+    bundle = answerer.compose(plan, results)
 
     if not results:
         print("No active memories matched the query.")
         return
 
+    print("Answer:")
+    print(bundle.answer)
+    print()
+    print("Evidence:")
     for index, result in enumerate(results, start=1):
         print(f"[{index}] {result.title}")
         print(f"memory_id: {result.memory_id}")

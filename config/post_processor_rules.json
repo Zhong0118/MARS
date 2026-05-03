@@ -1,0 +1,15 @@
+{
+  "high_priority_types": ["decision", "fact", "procedure", "risk"],
+  "low_priority_types": ["preference", "episode"],
+  "pending_confidence_threshold": 0.6,
+  "pending_importance_threshold": 2,
+  "drop_confidence_threshold": 0.45,
+  "topic_normalization_rules": {
+    "tech_route": ["tech", "technology", "stack", "frontend", "backend", "streamlit", "vue", "fastapi", "architecture", "react", "api"],
+    "timeline": ["timeline", "deadline", "schedule", "milestone", "eta", "review", "ship", "launch"],
+    "risk": ["risk", "blocker", "issue", "problem", "failure", "deployment", "incident", "unstable"],
+    "reporting": ["report", "summary", "weekly", "status update", "slide", "deck", "recap"],
+    "onboarding": ["onboarding", "handoff", "new member", "context", "background"],
+    "ownership": ["owner", "responsible", "follow up", "follow-up", "assignee"]
+  }
+}

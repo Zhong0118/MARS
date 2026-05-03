@@ -1,0 +1,22 @@
+[
+  {
+    "message_id": "msg_601",
+    "tenant_id": "tenant_demo",
+    "project_id": "carbon_platform",
+    "chat_id": "chat_project_main",
+    "user_id": "u_004",
+    "user_name": "Teacher",
+    "time": "2026-05-16T15:00:00",
+    "content": "Correction after today's review: phase one should switch to Vue plus FastAPI because the final demo needs a more engineered UI."
+  },
+  {
+    "message_id": "msg_602",
+    "tenant_id": "tenant_demo",
+    "project_id": "carbon_platform",
+    "chat_id": "chat_project_main",
+    "user_id": "u_003",
+    "user_name": "Frontend",
+    "time": "2026-05-16T15:08:00",
+    "content": "Understood. Then Streamlit becomes fallback only, not the main route."
+  }
+]

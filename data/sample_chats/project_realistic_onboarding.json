@@ -1,0 +1,32 @@
+[
+  {
+    "message_id": "msg_701",
+    "tenant_id": "tenant_demo",
+    "project_id": "carbon_platform",
+    "chat_id": "chat_project_main",
+    "user_id": "u_001",
+    "user_name": "PM",
+    "time": "2026-05-18T10:00:00",
+    "content": "For onboarding the new teammate: phase one goal is a teacher-facing demo, not a production release."
+  },
+  {
+    "message_id": "msg_702",
+    "tenant_id": "tenant_demo",
+    "project_id": "carbon_platform",
+    "chat_id": "chat_project_main",
+    "user_id": "u_002",
+    "user_name": "Backend",
+    "time": "2026-05-18T10:06:00",
+    "content": "Current memory to keep in mind: data pipeline is Python-first, and that is why Streamlit was initially chosen."
+  },
+  {
+    "message_id": "msg_703",
+    "tenant_id": "tenant_demo",
+    "project_id": "carbon_platform",
+    "chat_id": "chat_project_main",
+    "user_id": "u_005",
+    "user_name": "Ops",
+    "time": "2026-05-18T10:12:00",
+    "content": "Deployment fallback owner is Ops. If the school network fails, we present with the local package."
+  }
+]

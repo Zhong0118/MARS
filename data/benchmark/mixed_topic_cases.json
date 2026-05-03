@@ -1,0 +1,8 @@
+[
+  {
+    "case_id": "mixed_topic_001",
+    "project_id": "carbon_platform",
+    "input_file": "data/sample_chats/project_mixed_topics.json",
+    "expected_active_topic": "tech_route"
+  }
+]

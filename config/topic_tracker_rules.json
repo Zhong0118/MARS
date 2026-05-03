@@ -1,0 +1,4 @@
+{
+  "reuse_threshold": 0.35,
+  "new_topic_prefix": "topic"
+}

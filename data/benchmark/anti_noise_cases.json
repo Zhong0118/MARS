@@ -3,7 +3,18 @@
     "case_id": "anti_noise_001",
     "project_id": "carbon_platform",
     "query": "Why did we avoid Vue in phase one earlier?",
-    "target_title": "Phase One Demo Uses Streamlit",
+    "expected_topic": "tech_route",
+    "expected_memory_type": "decision",
+    "required_keywords": ["streamlit"],
     "noise_file": "data/sample_chats/project_day7_noise.json"
+  },
+  {
+    "case_id": "anti_noise_002",
+    "project_id": "carbon_platform",
+    "query": "What was the earlier phase-one frontend decision?",
+    "expected_topic": "tech_route",
+    "expected_memory_type": "decision",
+    "required_keywords": ["streamlit"],
+    "noise_file": "data/sample_chats/project_day8_heavy_noise.json"
   }
 ]

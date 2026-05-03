@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from app.storage.models import (
+    BenchmarkResult,
     Chat,
     ChatMembership,
     EvidencePack,
@@ -22,6 +23,7 @@ from app.storage.models import (
     MemoryObject,
     MemorySource,
     PolicyAction,
+    ProcessingCursor,
     Project,
     ProjectChat,
     PushLog,
@@ -287,6 +289,16 @@ def table_schema_statements() -> list[str]:
             created_at TEXT
         );
         """,
+        """
+        CREATE TABLE IF NOT EXISTS processing_cursors (
+            cursor_id TEXT PRIMARY KEY,
+            project_id TEXT,
+            chat_id TEXT,
+            last_event_id TEXT NOT NULL,
+            last_event_time TEXT NOT NULL,
+            updated_at TEXT
+        );
+        """,
     ]
 
 
@@ -372,6 +384,10 @@ def index_schema_statements() -> list[str]:
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_memberships_unique
         ON chat_memberships(chat_id, user_id);
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_processing_cursors_stream
+        ON processing_cursors(project_id, chat_id);
         """,
     ]
 
@@ -716,6 +732,44 @@ def insert_push_log(connection: sqlite3.Connection, push_log: PushLog) -> None:
     connection.commit()
 
 
+def insert_benchmark_result(connection: sqlite3.Connection, result: BenchmarkResult) -> None:
+    """Persist one benchmark outcome for later reporting."""
+    connection.execute(
+        """
+        INSERT INTO benchmark_results (
+            result_id,
+            benchmark_type,
+            case_id,
+            metric_json,
+            passed,
+            created_at
+        ) VALUES (
+            :result_id,
+            :benchmark_type,
+            :case_id,
+            :metric_json,
+            :passed,
+            :created_at
+        )
+        ON CONFLICT(result_id) DO UPDATE SET
+            benchmark_type = excluded.benchmark_type,
+            case_id = excluded.case_id,
+            metric_json = excluded.metric_json,
+            passed = excluded.passed,
+            created_at = excluded.created_at
+        """,
+        {
+            "result_id": result.result_id,
+            "benchmark_type": result.benchmark_type,
+            "case_id": result.case_id,
+            "metric_json": json.dumps(result.metric, ensure_ascii=False),
+            "passed": int(result.passed),
+            "created_at": result.created_at,
+        },
+    )
+    connection.commit()
+
+
 def upsert_tenant(connection: sqlite3.Connection, tenant: Tenant) -> None:
     """Insert or update tenant metadata used by future Feishu/OpenClaw adapters."""
     connection.execute(
@@ -916,6 +970,61 @@ def upsert_chat_membership(connection: sqlite3.Connection, membership: ChatMembe
     connection.commit()
 
 
+def get_processing_cursor(
+    connection: sqlite3.Connection,
+    project_id: str | None,
+    chat_id: str | None,
+) -> ProcessingCursor | None:
+    """Load the last processed cursor for one project/chat stream."""
+    row = connection.execute(
+        """
+        SELECT *
+        FROM processing_cursors
+        WHERE project_id IS ? AND chat_id IS ?
+        """,
+        (project_id, chat_id),
+    ).fetchone()
+    if row is None:
+        return None
+    return ProcessingCursor(
+        cursor_id=row["cursor_id"],
+        project_id=row["project_id"],
+        chat_id=row["chat_id"],
+        last_event_id=row["last_event_id"],
+        last_event_time=row["last_event_time"],
+        updated_at=row["updated_at"],
+    )
+
+
+def upsert_processing_cursor(connection: sqlite3.Connection, cursor: ProcessingCursor) -> None:
+    """Insert or update one per-stream processing cursor."""
+    connection.execute(
+        """
+        INSERT INTO processing_cursors (
+            cursor_id,
+            project_id,
+            chat_id,
+            last_event_id,
+            last_event_time,
+            updated_at
+        ) VALUES (
+            :cursor_id,
+            :project_id,
+            :chat_id,
+            :last_event_id,
+            :last_event_time,
+            :updated_at
+        )
+        ON CONFLICT(project_id, chat_id) DO UPDATE SET
+            last_event_id = excluded.last_event_id,
+            last_event_time = excluded.last_event_time,
+            updated_at = excluded.updated_at
+        """,
+        cursor.model_dump(),
+    )
+    connection.commit()
+
+
 def update_memory_status(
     connection: sqlite3.Connection,
     memory_id: str,
@@ -1031,6 +1140,47 @@ def list_memories(
     return [deserialize_memory_object(connection, row) for row in rows]
 
 
+def list_memories_by_version_group(
+    connection: sqlite3.Connection,
+    version_group_id: str,
+) -> list[MemoryObject]:
+    """List all memories that belong to the same version chain."""
+    rows = connection.execute(
+        """
+        SELECT *
+        FROM memory_objects
+        WHERE version_group_id = ?
+        ORDER BY version ASC, created_at ASC
+        """,
+        (version_group_id,),
+    ).fetchall()
+    return [deserialize_memory_object(connection, row) for row in rows]
+
+
+def list_recent_raw_events(
+    connection: sqlite3.Connection,
+    *,
+    project_id: str | None,
+    chat_id: str | None,
+    before_time: str | None = None,
+    limit: int = 6,
+) -> list[RawEvent]:
+    """Fetch a small history tail to support incremental window construction."""
+    query = """
+        SELECT *
+        FROM raw_events
+        WHERE project_id IS ? AND chat_id IS ?
+    """
+    params: list[Any] = [project_id, chat_id]
+    if before_time is not None:
+        query += " AND transaction_time <= ?"
+        params.append(before_time)
+    query += " ORDER BY transaction_time DESC, created_at DESC LIMIT ?"
+    params.append(limit)
+    rows = connection.execute(query, params).fetchall()
+    return [deserialize_raw_event(row) for row in reversed(rows)]
+
+
 def insert_retrieval_log(
     connection: sqlite3.Connection,
     *,
@@ -1130,6 +1280,32 @@ def build_evidence_pack(memory: MemoryObject, score: float) -> EvidencePack:
     )
 
 
+def get_memory_usage_counts(
+    connection: sqlite3.Connection,
+    memory_ids: list[str],
+) -> dict[str, int]:
+    """Return how often each memory has appeared in retrieval selections."""
+    if not memory_ids:
+        return {}
+
+    rows = connection.execute(
+        """
+        SELECT selected_memory_ids_json
+        FROM retrieval_logs
+        ORDER BY created_at DESC
+        LIMIT 200
+        """
+    ).fetchall()
+
+    counts = {memory_id: 0 for memory_id in memory_ids}
+    for row in rows:
+        selected_ids = json.loads(row["selected_memory_ids_json"] or "[]")
+        for selected_id in selected_ids:
+            if selected_id in counts:
+                counts[selected_id] += 1
+    return counts
+
+
 def serialize_raw_event(event: RawEvent) -> dict[str, Any]:
     """Convert list/dict fields into JSON strings before SQLite insertion."""
     data = event.model_dump()
@@ -1186,6 +1362,32 @@ def serialize_chat(chat: Chat) -> dict[str, Any]:
     data = chat.model_dump()
     data["raw_payload_json"] = json.dumps(data.pop("raw_payload"), ensure_ascii=False)
     return data
+
+
+def deserialize_raw_event(row: sqlite3.Row) -> RawEvent:
+    """Build a RawEvent model from one SQLite row."""
+    return RawEvent(
+        event_id=row["event_id"],
+        event_type=row["event_type"],
+        source_type=row["source_type"],
+        source_id=row["source_id"],
+        tenant_id=row["tenant_id"],
+        project_id=row["project_id"],
+        chat_id=row["chat_id"],
+        thread_id=row["thread_id"],
+        actor_id=row["actor_id"],
+        actor_name=row["actor_name"],
+        content=row["content"] or "",
+        content_type=row["content_type"] or "text",
+        mentions=json.loads(row["mentions_json"] or "[]"),
+        reply_to=row["reply_to"],
+        raw_payload=json.loads(row["raw_payload_json"] or "{}"),
+        transaction_time=row["transaction_time"],
+        valid_time_start=row["valid_time_start"],
+        valid_time_end=row["valid_time_end"],
+        source_url=row["source_url"],
+        created_at=row["created_at"],
+    )
 
 
 def deserialize_memory_object(connection: sqlite3.Connection, row: sqlite3.Row) -> MemoryObject:

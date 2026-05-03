@@ -6,5 +6,13 @@
     "mars_time_sec": 12,
     "manual_steps": 8,
     "mars_steps": 2
+  },
+  {
+    "case_id": "efficiency_002",
+    "task": "Find the latest active frontend route after a correction.",
+    "manual_time_sec": 240,
+    "mars_time_sec": 15,
+    "manual_steps": 10,
+    "mars_steps": 3
   }
 ]
