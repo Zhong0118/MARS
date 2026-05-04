@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +52,13 @@ class ExtractResponse(BaseModel):
 
 
 
-app = FastAPI(title="MARS", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    initialize_database()
+    yield
+
+
+app = FastAPI(title="MARS", version="0.1.0", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -62,7 +70,6 @@ def health() -> dict[str, str]:
 @app.post("/api/ingest/messages")
 def ingest_messages(request: IngestMessagesRequest) -> dict[str, int]:
     """Normalize messages into RawEvent rows and persist them."""
-    initialize_database()
     events = [message_to_raw_event(message) for message in request.messages]
     with get_connection() as connection:
         ingest_events(connection, events)
@@ -76,23 +83,22 @@ def extract_memories(request: ExtractRequest) -> ExtractResponse:
     Reconciliation is always applied as part of extraction — there is no
     separate reconcile endpoint.
     """
-    initialize_database()
     events = [message_to_raw_event(message) for message in request.messages]
     with get_connection() as connection:
         ingest_events(connection, events)
-        memories = extract_and_reconcile(connection, events)
-    return ExtractResponse(raw_event_count=len(events), extracted_count=len(memories), memories=memories)
+        result = extract_and_reconcile(connection, events)
+    return ExtractResponse(raw_event_count=len(events), extracted_count=len(result.memories), memories=result.memories)
 
 
 @app.post("/api/memory/search", response_model=SearchResponse)
 def search_memories(request: SearchRequest) -> SearchResponse:
     """Run local keyword search over stored active memories."""
-    initialize_database()
     retriever = MemoryRetriever(top_k=request.top_k)
     planner = QueryPlanner()
     answerer = MemoryAnswerer()
-    results = retriever.search(request.query, project_id=request.project_id)
-    bundle = answerer.compose(planner.plan(request.query, top_k=request.top_k), results)
+    plan = planner.plan(request.query, top_k=request.top_k)
+    results = retriever.search(request.query, project_id=request.project_id, plan=plan)
+    bundle = answerer.compose(plan, results)
     return SearchResponse(answer=bundle.answer, results=results)
 
 

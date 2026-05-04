@@ -3,6 +3,7 @@ from __future__ import annotations
 """Structured memory extraction from normalized raw events."""
 
 from app.llm.provider import LLMProvider, get_llm_provider
+from app.core.context_assembler import ExtractionContext
 from app.core.post_processor import ExtractionPostProcessor
 from app.storage.models import DiscussionWindow, MemoryObject, RawEvent, TopicAssignment
 
@@ -14,9 +15,31 @@ class MemoryExtractor:
         self.llm = llm or get_llm_provider()
         self.post_processor = ExtractionPostProcessor()
 
-    def extract(self, events: list[RawEvent]) -> list[MemoryObject]:
-        """Run extraction and validate every candidate with Pydantic."""
-        candidates = self.llm.extract_memories([event.model_dump() for event in events])
+    def extract(
+        self,
+        events: list[RawEvent],
+        context: ExtractionContext | None = None,
+    ) -> list[MemoryObject]:
+        """Run extraction and validate every candidate with Pydantic.
+
+        When *context* is provided, bridge events and existing memory titles
+        are passed to the LLM so it avoids redundant extraction.
+        """
+        event_dicts = [event.model_dump() for event in events]
+        extraction_hints: dict | None = None
+        if context:
+            extraction_hints = {}
+            if context.bridge_events:
+                extraction_hints["bridge_context"] = [
+                    {"actor_name": e.actor_name, "content": e.content}
+                    for e in context.bridge_events
+                ]
+            if context.topic_history:
+                extraction_hints["recent_topics"] = context.topic_history
+            if context.recent_memory_titles:
+                extraction_hints["existing_memory_titles"] = context.recent_memory_titles
+
+        candidates = self.llm.extract_memories(event_dicts, extraction_hints=extraction_hints)
         extracted_memories: list[MemoryObject] = []
         for candidate in candidates:
             try:
@@ -41,17 +64,20 @@ class MemoryExtractor:
         windows: list[DiscussionWindow],
         event_index: dict[str, RawEvent],
         topic_assignments: dict[str, TopicAssignment] | None = None,
+        extraction_contexts: dict[str, ExtractionContext] | None = None,
     ) -> list[MemoryObject]:
         """Extract memories window by window to keep provider inputs bounded."""
         extracted_memories: list[MemoryObject] = []
         topic_assignments = topic_assignments or {}
+        extraction_contexts = extraction_contexts or {}
 
         for window in windows:
             window_events = [event_index[event_id] for event_id in window.event_ids if event_id in event_index]
             if not window_events:
                 continue
 
-            window_memories = self.extract(window_events)
+            ctx = extraction_contexts.get(window.window_id)
+            window_memories = self.extract(window_events, context=ctx)
             assignment = topic_assignments.get(window.window_id)
             for memory in window_memories:
                 if not memory.topic:

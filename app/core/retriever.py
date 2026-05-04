@@ -7,8 +7,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from app.core.query_planner import QueryPlan, QueryPlanner, normalize_query_topic
-from app.core.text_utils import tokenize_query
+from app.core.query_planner import QueryPlan, normalize_query_topic
+from app.core.window_builder import tokenize_query
 from app.storage.db import build_evidence_pack, get_connection, get_memory_usage_counts, insert_retrieval_log, list_memories
 from app.storage.models import EvidencePack, MemoryObject
 
@@ -20,12 +20,10 @@ class MemoryRetriever:
         self.top_k = top_k
         self.status_filter = status_filter
         self.db_path = db_path
-        self.query_planner = QueryPlanner()
 
-    def search(self, query: str, project_id: str | None = None) -> list[EvidencePack]:
+    def search(self, query: str, project_id: str | None = None, *, plan: QueryPlan) -> list[EvidencePack]:
         """Search memories and return ranked EvidencePack results."""
         started_at = time.perf_counter()
-        plan = self.query_planner.plan(query, top_k=self.top_k)
         query_tokens = tokenize_query(query)
 
         with get_connection(self.db_path) as connection:

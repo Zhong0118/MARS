@@ -26,7 +26,6 @@ from app.storage.models import (
     ProcessingCursor,
     Project,
     ProjectChat,
-    PushLog,
     RawEvent,
     Tenant,
     User,
@@ -191,23 +190,6 @@ def table_schema_statements() -> list[str]:
         );
         """,
         """
-        CREATE TABLE IF NOT EXISTS push_logs (
-            push_id TEXT PRIMARY KEY,
-            trigger_type TEXT,
-            tenant_id TEXT,
-            project_id TEXT,
-            chat_id TEXT,
-            user_id TEXT,
-            memory_id TEXT,
-            push_channel TEXT,
-            push_content TEXT,
-            should_push INTEGER,
-            policy_action_id TEXT,
-            user_feedback TEXT,
-            created_at TEXT
-        );
-        """,
-        """
         CREATE TABLE IF NOT EXISTS tenants (
             tenant_id TEXT PRIMARY KEY,
             tenant_name TEXT,
@@ -368,14 +350,6 @@ def index_schema_statements() -> list[str]:
         """
         CREATE INDEX IF NOT EXISTS idx_retrieval_logs_project_time
         ON retrieval_logs(project_id, created_at);
-        """,
-        """
-        CREATE INDEX IF NOT EXISTS idx_push_logs_memory_chat_time
-        ON push_logs(memory_id, chat_id, created_at);
-        """,
-        """
-        CREATE INDEX IF NOT EXISTS idx_push_logs_project_time
-        ON push_logs(project_id, created_at);
         """,
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_project_chats_unique
@@ -680,57 +654,6 @@ def insert_policy_action(connection: sqlite3.Connection, action: PolicyAction) -
     connection.commit()
 
 
-def insert_push_log(connection: sqlite3.Connection, push_log: PushLog) -> None:
-    """Persist a push/summoning audit record."""
-    connection.execute(
-        """
-        INSERT INTO push_logs (
-            push_id,
-            trigger_type,
-            tenant_id,
-            project_id,
-            chat_id,
-            user_id,
-            memory_id,
-            push_channel,
-            push_content,
-            should_push,
-            policy_action_id,
-            user_feedback,
-            created_at
-        ) VALUES (
-            :push_id,
-            :trigger_type,
-            :tenant_id,
-            :project_id,
-            :chat_id,
-            :user_id,
-            :memory_id,
-            :push_channel,
-            :push_content,
-            :should_push,
-            :policy_action_id,
-            :user_feedback,
-            :created_at
-        )
-        ON CONFLICT(push_id) DO UPDATE SET
-            trigger_type = excluded.trigger_type,
-            tenant_id = excluded.tenant_id,
-            project_id = excluded.project_id,
-            chat_id = excluded.chat_id,
-            user_id = excluded.user_id,
-            memory_id = excluded.memory_id,
-            push_channel = excluded.push_channel,
-            push_content = excluded.push_content,
-            should_push = excluded.should_push,
-            policy_action_id = excluded.policy_action_id,
-            user_feedback = excluded.user_feedback,
-            created_at = excluded.created_at
-        """,
-        serialize_push_log(push_log),
-    )
-    connection.commit()
-
 
 def insert_benchmark_result(connection: sqlite3.Connection, result: BenchmarkResult) -> None:
     """Persist one benchmark outcome for later reporting."""
@@ -1025,23 +948,6 @@ def upsert_processing_cursor(connection: sqlite3.Connection, cursor: ProcessingC
     connection.commit()
 
 
-def update_memory_status(
-    connection: sqlite3.Connection,
-    memory_id: str,
-    status: str,
-    updated_at: str | None = None,
-) -> None:
-    """Update only the memory status and audit timestamp."""
-    connection.execute(
-        """
-        UPDATE memory_objects
-        SET status = ?, updated_at = ?
-        WHERE memory_id = ?
-        """,
-        (status, updated_at or utc_now_iso(), memory_id),
-    )
-    connection.commit()
-
 
 def mark_memory_superseded(
     connection: sqlite3.Connection,
@@ -1085,34 +991,6 @@ def get_memory_by_id(connection: sqlite3.Connection, memory_id: str) -> MemoryOb
     return deserialize_memory_object(connection, row)
 
 
-def list_active_memories_by_project_topic(
-    connection: sqlite3.Connection,
-    project_id: str,
-    topic: str | None = None,
-) -> list[MemoryObject]:
-    """List active memories filtered by project and optionally topic."""
-    if topic:
-        rows = connection.execute(
-            """
-            SELECT *
-            FROM memory_objects
-            WHERE project_id = ? AND status = 'active' AND topic = ?
-            ORDER BY updated_at DESC, created_at DESC
-            """,
-            (project_id, topic),
-        ).fetchall()
-    else:
-        rows = connection.execute(
-            """
-            SELECT *
-            FROM memory_objects
-            WHERE project_id = ? AND status = 'active'
-            ORDER BY updated_at DESC, created_at DESC
-            """,
-            (project_id,),
-    ).fetchall()
-    return [deserialize_memory_object(connection, row) for row in rows]
-
 
 def list_memories(
     connection: sqlite3.Connection,
@@ -1139,22 +1017,6 @@ def list_memories(
     rows = connection.execute(query, params).fetchall()
     return [deserialize_memory_object(connection, row) for row in rows]
 
-
-def list_memories_by_version_group(
-    connection: sqlite3.Connection,
-    version_group_id: str,
-) -> list[MemoryObject]:
-    """List all memories that belong to the same version chain."""
-    rows = connection.execute(
-        """
-        SELECT *
-        FROM memory_objects
-        WHERE version_group_id = ?
-        ORDER BY version ASC, created_at ASC
-        """,
-        (version_group_id,),
-    ).fetchall()
-    return [deserialize_memory_object(connection, row) for row in rows]
 
 
 def list_recent_raw_events(
@@ -1275,6 +1137,7 @@ def build_evidence_pack(memory: MemoryObject, score: float) -> EvidencePack:
         source_event_ids=memory.source_event_ids,
         rationale=memory.rationale,
         objections=memory.objections,
+        memory_type=memory.memory_type,
         topic=memory.topic,
         project_id=memory.project_id,
     )
@@ -1335,12 +1198,6 @@ def serialize_policy_action(action: PolicyAction) -> dict[str, Any]:
     data["candidate_json"] = json.dumps(data.pop("candidate_payload"), ensure_ascii=False)
     return data
 
-
-def serialize_push_log(push_log: PushLog) -> dict[str, Any]:
-    """Convert boolean fields into SQLite-compatible scalars."""
-    data = push_log.model_dump()
-    data["should_push"] = int(data["should_push"])
-    return data
 
 
 def serialize_tenant(tenant: Tenant) -> dict[str, Any]:

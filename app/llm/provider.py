@@ -22,7 +22,7 @@ load_local_env()
 class LLMProvider(Protocol):
     """Minimal interface shared by mock and real providers."""
 
-    def extract_memories(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def extract_memories(self, events: list[dict[str, Any]], extraction_hints: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         ...
 
     def judge_relation(self, new_memory: dict[str, Any], existing_memories: list[dict[str, Any]]) -> dict[str, Any]:
@@ -47,11 +47,14 @@ class LLMProvider(Protocol):
     def plan_query(self, query: str, candidate_topics: list[str]) -> dict[str, Any]:
         ...
 
+    def judge_consolidation(self, primary: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+        ...
+
 
 class MockLLM:
     """Deterministic placeholder provider for local MVP phases."""
 
-    def extract_memories(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def extract_memories(self, events: list[dict[str, Any]], extraction_hints: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Return structured memory candidates for known sample scenarios."""
         if not events:
             return []
@@ -228,6 +231,65 @@ class MockLLM:
             "strict_topic": False,
         }
 
+    def judge_consolidation(self, primary: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+        """Deterministic consolidation judgment for mock testing."""
+        from app.core.window_builder import tokenize_text
+
+        primary_type = str(primary.get("memory_type", ""))
+        candidate_type = str(candidate.get("memory_type", ""))
+        primary_topic = str(primary.get("topic", ""))
+        candidate_topic = str(candidate.get("topic", ""))
+
+        high_types = {"decision", "risk", "procedure"}
+        support_types = {"fact", "preference", "episode"}
+
+        if primary_topic != candidate_topic:
+            return self._cons_result(False, "unrelated", 0.9, "Different topics.", "Topics do not match.")
+
+        p_tokens = tokenize_text(str(primary.get("content", "")))
+        c_tokens = tokenize_text(str(candidate.get("content", "")))
+        content_overlap = (len(p_tokens & c_tokens) / min(len(p_tokens), len(c_tokens))) if p_tokens and c_tokens else 0.0
+
+        if primary_type in high_types and candidate_type in high_types:
+            if content_overlap >= 0.6:
+                return self._cons_result(True, "duplicate", 0.85,
+                    f"Near-duplicate high-priority pair ({content_overlap:.2f} overlap).")
+            return self._cons_result(False, "independent", 0.8,
+                "Both are high-priority types; merging could lose distinct semantics.",
+                "Two high-priority memories on the same topic should stay separate.")
+
+        if primary_type in high_types and candidate_type in support_types:
+            return self._cons_result(True, "support", 0.85,
+                f"{candidate_type} naturally supports {primary_type}.")
+
+        if primary_type in support_types and candidate_type in high_types:
+            return self._cons_result(True, "support", 0.85,
+                f"{primary_type} naturally supports {candidate_type}.")
+
+        if primary_type in support_types and candidate_type in support_types:
+            if content_overlap >= 0.3:
+                relation = "duplicate" if primary_type == candidate_type else "support"
+                return self._cons_result(True, relation, 0.8,
+                    f"Support-type pair with high content overlap ({content_overlap:.2f}).")
+            return self._cons_result(False, "unrelated", 0.5,
+                "Low content overlap between support types.", "No clear merge signal.")
+
+        return self._cons_result(False, "unrelated", 0.5,
+            "MockLLM default: keep separate.", "No clear merge signal.")
+
+    def _cons_result(
+        self, merge: bool, relation: str, confidence: float, reason: str,
+        keep_separate: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "merge_decision": merge,
+            "relation": relation,
+            "merge_role": "support" if merge and relation == "support" else None,
+            "reason": reason,
+            "confidence": confidence,
+            "keep_separate_reason": keep_separate,
+        }
+
 
 class OpenAICompatibleProvider:
     """Shared implementation for OpenAI-compatible chat completion providers."""
@@ -246,13 +308,21 @@ class OpenAICompatibleProvider:
         self.provider_label = provider_label
         if not self.api_key:
             raise ValueError(f"{provider_label} API key is not configured.")
+        try:
+            from openai import OpenAI
+        except ImportError as exc:
+            raise ImportError(
+                "The 'openai' package is required for real providers. "
+                "Install it with `pip install openai` or keep using mock mode."
+            ) from exc
+        self._client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
-    def extract_memories(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def extract_memories(self, events: list[dict[str, Any]], extraction_hints: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Call the provider to extract structured memories from normalized events."""
         if not events:
             return []
 
-        payload = {
+        payload: dict[str, Any] = {
             "events": [
                 {
                     "event_id": event.get("event_id"),
@@ -292,6 +362,20 @@ class OpenAICompatibleProvider:
             },
         }
 
+        if extraction_hints:
+            payload["context"] = extraction_hints
+
+        context_clause = ""
+        if extraction_hints:
+            if extraction_hints.get("existing_memory_titles"):
+                titles = ", ".join(extraction_hints["existing_memory_titles"])
+                context_clause += f" The following memories already exist for this topic: [{titles}]. Do NOT re-extract information already covered by these memories."
+            if extraction_hints.get("bridge_context"):
+                context_clause += " Some messages from the preceding conversation are included as bridge_context for continuity."
+            if extraction_hints.get("recent_topics"):
+                topics = ", ".join(extraction_hints["recent_topics"])
+                context_clause += f" Recent discussion topics: [{topics}]."
+
         prompt = (
             "You are the memory extraction component of MARS. "
             "Read the normalized collaboration events and return strict JSON only. "
@@ -299,6 +383,7 @@ class OpenAICompatibleProvider:
             "Do not include explanations outside JSON. "
             "Use the provided event IDs in source_event_ids. "
             "Prefer one concise memory per coherent topic unless there are clearly multiple durable memories."
+            + context_clause
         )
 
         content = self._chat_json(system_prompt=prompt, user_payload=payload)
@@ -450,18 +535,80 @@ class OpenAICompatibleProvider:
             "reason": str(parsed.get("reason", "llm_query_planning")),
         }
 
+    def judge_consolidation(self, primary: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+        """Judge whether two same-batch memories should be merged during consolidation."""
+        payload = {
+            "primary_memory": {
+                "memory_type": primary.get("memory_type"),
+                "topic": primary.get("topic"),
+                "title": primary.get("title"),
+                "content": primary.get("content"),
+                "source_event_ids": primary.get("source_event_ids", []),
+                "confidence": primary.get("confidence"),
+                "importance": primary.get("importance"),
+            },
+            "candidate_memory": {
+                "memory_type": candidate.get("memory_type"),
+                "topic": candidate.get("topic"),
+                "title": candidate.get("title"),
+                "content": candidate.get("content"),
+                "source_event_ids": candidate.get("source_event_ids", []),
+                "confidence": candidate.get("confidence"),
+                "importance": candidate.get("importance"),
+            },
+            "output_schema": {
+                "merge_decision": "boolean",
+                "relation": "support|duplicate|independent|unrelated",
+                "merge_role": "support|null",
+                "reason": "string",
+                "confidence": "0.0-1.0",
+                "keep_separate_reason": "string|null",
+            },
+        }
+        prompt = (
+            "You are the consolidation component of MARS. "
+            "Two memory candidates were extracted from the same batch of conversation events. "
+            "Decide whether the candidate should be merged into the primary, or kept separate.\n\n"
+
+            "RELATION TYPES (choose exactly one):\n"
+            "- support: candidate adds background, rationale, or context to the primary. "
+            "Typical: fact supporting a decision, preference explaining a choice. merge_decision=true.\n"
+            "- duplicate: candidate says the same thing as primary in different words. merge_decision=true.\n"
+            "- independent: candidate is a separate durable memory worth preserving on its own. merge_decision=false.\n"
+            "- unrelated: candidate has no meaningful connection to primary. merge_decision=false.\n\n"
+
+            "RULES:\n"
+            "1. merge_decision=true ONLY when relation is support or duplicate.\n"
+            "2. merge_decision=false ALWAYS when relation is independent or unrelated.\n"
+            "3. Same topic does NOT mean same memory. Two facts about the same project that describe "
+            "different things must stay separate.\n"
+            "4. Different stakeholder preferences must stay separate even on the same topic.\n\n"
+
+            "TYPE COMBINATION GUIDELINES:\n"
+            "- decision + fact/preference -> likely support (fact provides basis, preference provides rationale)\n"
+            "- risk + fact -> likely support (fact provides evidence for the risk)\n"
+            "- decision + risk -> default independent (risk is a separate governance concern)\n"
+            "- decision + procedure -> default independent (procedure is actionable, not just context)\n"
+            "- risk + procedure -> default independent\n"
+            "- Two high-priority types (decision+decision, risk+risk, procedure+procedure, etc.) -> "
+            "default independent unless one is clearly just restating the other word-for-word.\n\n"
+
+            "Return strict JSON matching the output_schema."
+        )
+        content = self._chat_json(system_prompt=prompt, user_payload=payload)
+        parsed = self._parse_json(content)
+        return {
+            "merge_decision": bool(parsed.get("merge_decision", False)),
+            "relation": str(parsed.get("relation", "unrelated")),
+            "merge_role": parsed.get("merge_role"),
+            "reason": str(parsed.get("reason", "No reason provided.")),
+            "confidence": float(parsed.get("confidence", 0.0)),
+            "keep_separate_reason": parsed.get("keep_separate_reason"),
+        }
+
     def _chat_json(self, *, system_prompt: str, user_payload: dict[str, Any]) -> str:
         """Send one OpenAI-compatible chat request and return the text content."""
-        try:
-            from openai import OpenAI
-        except ImportError as exc:
-            raise ImportError(
-                "The 'openai' package is required for real providers. "
-                "Install it with `pip install openai` or keep using mock mode."
-            ) from exc
-
-        client = OpenAI(api_key=self.api_key, base_url=self.base_url)
-        response = client.chat.completions.create(
+        response = self._client.chat.completions.create(
             model=self.model,
             messages=[
                 {
@@ -530,10 +677,22 @@ def extract_json_payload(content: str) -> str:
         if candidate:
             text = candidate
 
-    json_start = text.find("{")
-    json_end = text.rfind("}")
-    if json_start != -1 and json_end != -1 and json_end > json_start:
-        return text[json_start : json_end + 1].strip()
+    obj_start = text.find("{")
+    obj_end = text.rfind("}")
+    arr_start = text.find("[")
+    arr_end = text.rfind("]")
+
+    obj_valid = obj_start != -1 and obj_end != -1 and obj_end > obj_start
+    arr_valid = arr_start != -1 and arr_end != -1 and arr_end > arr_start
+
+    if obj_valid and arr_valid:
+        start = min(obj_start, arr_start)
+        end = max(obj_end, arr_end)
+        return text[start : end + 1].strip()
+    if obj_valid:
+        return text[obj_start : obj_end + 1].strip()
+    if arr_valid:
+        return text[arr_start : arr_end + 1].strip()
 
     return text
 

@@ -72,12 +72,6 @@ PolicyActionType = Literal[
     "NOOP",
 ]
 
-PushChannel = Literal[
-    "group",
-    "private",
-    "bitable",
-    "cli",
-]
 
 
 class RawEvent(BaseModel):
@@ -197,26 +191,10 @@ class EvidencePack(BaseModel):
     source_event_ids: list[str]
     rationale: list[str] = Field(default_factory=list)
     objections: list[str] = Field(default_factory=list)
+    memory_type: str = ""
     topic: str | None = None
     project_id: str | None = None
 
-
-class PushLog(BaseModel):
-    """Audit record for proactive recall, reminders, and push outcomes."""
-
-    push_id: str = Field(default_factory=lambda: make_id("push"))
-    trigger_type: str
-    tenant_id: str | None = None
-    project_id: str | None = None
-    chat_id: str | None = None
-    user_id: str | None = None
-    memory_id: str
-    push_channel: PushChannel
-    push_content: str
-    should_push: bool = True
-    policy_action_id: str | None = None
-    user_feedback: str | None = None
-    created_at: str = Field(default_factory=utc_now_iso)
 
 
 class Tenant(BaseModel):

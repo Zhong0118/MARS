@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from app.llm.provider import LLMProvider, get_llm_provider
 from app.core.post_processor import slugify
-from app.core.text_utils import tokenize_query
+from app.core.window_builder import tokenize_query
 
 
 @dataclass(slots=True)
@@ -20,7 +20,6 @@ class QueryPlan:
     preferred_types: list[str]
     primary_types: list[str]
     strict_topic: bool = False
-    require_active: bool = True
 
 
 class QueryPlanner:
@@ -32,11 +31,6 @@ class QueryPlanner:
 
     def plan(self, query: str, *, top_k: int = 5) -> QueryPlan:
         """Infer coarse topic and preferred memory types from the query."""
-        llm_plan = self._plan_with_llm(query)
-        if llm_plan is not None:
-            llm_plan.top_k = top_k
-            return llm_plan
-
         lowered = query.lower()
         tokens = tokenize_query(query)
 
@@ -52,7 +46,7 @@ class QueryPlanner:
             primary_types = ["decision"]
             query_type = "current_state"
             strict_topic = True
-        elif any(keyword in lowered for keyword in ["risk", "issue", "blocker", "problem", "deployment"]):
+        elif any(keyword in lowered for keyword in ["risk", "issue", "blocker", "problem", "deployment", "deploy"]):
             normalized_topic = "risk"
             preferred_types = ["risk", "procedure", "fact"]
             primary_types = ["risk", "procedure"]
@@ -86,7 +80,7 @@ class QueryPlanner:
                     normalized_topic = "tech_route"
                     break
 
-        return QueryPlan(
+        heuristic_plan = QueryPlan(
             query=query,
             normalized_topic=normalized_topic,
             query_type=query_type,
@@ -96,7 +90,24 @@ class QueryPlanner:
             strict_topic=strict_topic,
         )
 
-    def _plan_with_llm(self, query: str) -> QueryPlan | None:
+        if self._should_use_llm_fallback(heuristic_plan):
+            llm_plan = self._plan_with_llm(query, top_k=top_k)
+            if llm_plan is not None:
+                return llm_plan
+
+        return heuristic_plan
+
+    def _should_use_llm_fallback(self, plan: QueryPlan) -> bool:
+        """Use LLM planning only when heuristic intent is weak or ambiguous."""
+        if plan.query_type == "general":
+            return True
+        if plan.normalized_topic is None:
+            return True
+        if plan.query_type == "explanation":
+            return True
+        return False
+
+    def _plan_with_llm(self, query: str, *, top_k: int) -> QueryPlan | None:
         """Let the LLM classify user intent before falling back to keyword rules."""
         try:
             payload = self.llm.plan_query(query, self.candidate_topics)
@@ -118,7 +129,7 @@ class QueryPlanner:
             query=query,
             normalized_topic=normalized_topic,
             query_type=query_type,
-            top_k=5,
+            top_k=top_k,
             preferred_types=preferred_types,
             primary_types=primary_types,
             strict_topic=strict_topic,

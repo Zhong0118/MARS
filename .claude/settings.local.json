@@ -1,7 +1,43 @@
 {
   "permissions": {
     "allow": [
-      "Bash(wc -l /c/Users/zx/Desktop/0-Inbox/1-Projects/memory_engine/app/**/*.py /c/Users/zx/Desktop/0-Inbox/1-Projects/memory_engine/scripts/*.py)"
+      "Bash(wc -l /c/Users/zx/Desktop/0-Inbox/1-Projects/memory_engine/app/**/*.py /c/Users/zx/Desktop/0-Inbox/1-Projects/memory_engine/scripts/*.py)",
+      "Bash(python -c \"from app.storage.models import *; from app.storage.db import *; from app.core.retriever import *; from app.core.answerer import *; from app.core.reconciler import *; from app.core.query_planner import *; from app.core.ingestion import *; from app.main import app; print\\('All imports OK'\\)\")",
+      "Bash(python scripts/run_extract.py data/sample_chats/project_realistic_multiday.json)",
+      "Bash(python scripts/run_extract.py --input data/sample_chats/project_realistic_multiday.json)",
+      "Bash(python scripts/run_extract.py --input data/sample_chats/project_day1_decision.json)",
+      "Bash(python scripts/search_memory.py \"current tech route\")",
+      "Bash(python -c \"from app.llm.provider import MockLLM; m = MockLLM\\(\\); print\\(m.judge_consolidation\\({'memory_type':'decision','topic':'tech_route','title':'Use Streamlit','content':'test','source_event_ids':['e1'],'confidence':0.9,'importance':4}, {'memory_type':'fact','topic':'tech_route','title':'Python stack','content':'support','source_event_ids':['e2'],'confidence':0.7,'importance':2}\\)\\)\")",
+      "Bash(python -c \"from app.llm.provider import MockLLM; m = MockLLM\\(\\); print\\(m.judge_consolidation\\({'memory_type':'decision','topic':'tech_route','title':'Use Streamlit','content':'test','source_event_ids':['e1'],'confidence':0.9,'importance':4}, {'memory_type':'risk','topic':'tech_route','title':'Deploy risk','content':'risk detail','source_event_ids':['e3'],'confidence':0.8,'importance':4}\\)\\)\")",
+      "Bash(MARS_LLM_PROVIDER=mock python scripts/run_extract.py --input data/sample_chats/project_day1_decision.json)",
+      "Bash(MARS_LLM_PROVIDER=mock python scripts/search_memory.py \"current tech route\")",
+      "Bash(MARS_LLM_PROVIDER=mock python scripts/run_extract.py --input data/sample_chats/project_day2_correction.json)",
+      "Bash(MARS_LLM_PROVIDER=mock python scripts/run_extract.py --input data/sample_chats/conflict_update.json)",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"from app.core.ingestion import *; from app.core.consolidator import *; print\\('imports OK'\\)\")",
+      "Bash(python scripts/search_memory.py \"校园网部署风险\")",
+      "Bash(python scripts/run_benchmark.py)",
+      "Bash(python scripts/run_consolidation_eval.py)",
+      "Bash(python -c \"from app.core.ingestion import *; from app.main import *; print\\('imports OK'\\)\")",
+      "Bash(MARS_LLM_PROVIDER=mock python scripts/run_consolidation_eval.py)",
+      "Bash(python scripts/search_memory.py \"当前技术路线\")",
+      "Bash(python scripts/search_memory.py \"部署风险\")",
+      "Bash(python scripts/search_memory.py \"部署\")",
+      "Bash(python scripts/search_memory.py \"deployment risk\")",
+      "Bash(python -c \"from app.core.query_planner import *; from app.core.retriever import *; from app.core.answerer import *; from app.llm.provider import *; print\\('All imports OK'\\)\")",
+      "Bash(python -c \"from app.core.session_tracker import SessionTracker, SessionTrackerConfig; print\\('SessionTracker imported OK'\\)\")",
+      "Bash(python -c \"from app.core.window_builder import WindowBuilder; print\\('WindowBuilder v2 imported OK'\\)\")",
+      "Bash(python -c \"from app.core.extractor import MemoryExtractor; from app.core.context_assembler import ContextAssembler, ExtractionContext; print\\('Extractor + ContextAssembler imported OK'\\)\")",
+      "Bash(python -c \"from app.core.ingestion import extract_and_reconcile, ingest_events; print\\('Ingestion pipeline imported OK'\\)\")",
+      "Bash(set MARS_LLM_PROVIDER=mock)",
+      "Bash(MARS_LLM_PROVIDER=mock python scripts/run_extract.py --input data/sample_chats/project_realistic_multiday.json)",
+      "Bash(MARS_LLM_PROVIDER=mock python scripts/run_benchmark.py)",
+      "Bash(del /f memory_store\\\\mars_benchmark.db)",
+      "Bash(del /f memory_store\\\\mars_dev.db)",
+      "Bash(MARS_LLM_PROVIDER=mock python -c \"from app.core.ingestion import extract_and_reconcile; print\\('OK'\\)\")",
+      "Bash(MARS_LLM_PROVIDER=mock python scripts/run_extract.py --input data/sample_chats/project_mixed_topics.json)",
+      "Bash(MARS_LLM_PROVIDER=mock python scripts/search_memory.py \"当前技术路线\")",
+      "Bash(MARS_LLM_PROVIDER=mock python scripts/search_memory.py \"部署风险\")"
     ]
   }
 }

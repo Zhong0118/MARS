@@ -67,11 +67,18 @@ def main() -> None:
             print(f"Ingested {len(events)} raw events from {args.input}")
             return
 
-        reconciled_memories = extract_and_reconcile(connection, events)
+        result = extract_and_reconcile(connection, events)
 
     print(f"Provider: {type(provider).__name__}")
-    print(f"Ingested {len(events)} raw events and extracted {len(reconciled_memories)} memories from {args.input}")
-    print_memory_summary(reconciled_memories)
+    print(f"Ingested {len(events)} raw events and extracted {len(result.memories)} memories from {args.input}")
+    if result.consolidation_traces:
+        print(f"\nConsolidation: {result.pre_consolidation_count} -> {result.post_consolidation_count} memories "
+              f"({result.llm_pair_count} LLM pair judgments)")
+        for trace in result.consolidation_traces:
+            print(f"  {trace.primary_memory_id} <-> {trace.candidate_memory_id}: "
+                  f"merge={trace.merge_decision} relation={trace.relation} "
+                  f"stage={trace.filter_stage} conf={trace.confidence:.2f}")
+    print_memory_summary(result.memories)
 
 
 if __name__ == "__main__":

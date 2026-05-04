@@ -33,8 +33,8 @@ def main() -> None:
     retriever = MemoryRetriever(top_k=args.top_k)
     planner = QueryPlanner()
     answerer = MemoryAnswerer()
-    results = retriever.search(args.query, project_id=args.project_id)
     plan = planner.plan(args.query, top_k=args.top_k)
+    results = retriever.search(args.query, project_id=args.project_id, plan=plan)
     bundle = answerer.compose(plan, results)
 
     if not results:

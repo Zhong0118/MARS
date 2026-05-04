@@ -2,14 +2,19 @@ from __future__ import annotations
 
 """Shared ingestion helpers used by both CLI scripts and HTTP routes."""
 
+from dataclasses import dataclass, field
+
+from app.core.context_assembler import ContextAssembler
 from app.core.extractor import MemoryExtractor
-from app.core.consolidator import MemoryConsolidator
+from app.core.consolidator import ConsolidationTrace, MemoryConsolidator
 from app.core.reconciler import MemoryReconciler
+from app.core.session_tracker import SessionTracker
 from app.core.topic_tracker import TopicTracker
 from app.core.window_builder import WindowBuilder
 from app.storage.db import (
     get_processing_cursor,
     insert_raw_events,
+    list_memories,
     list_recent_raw_events,
     upsert_processing_cursor,
     upsert_chat,
@@ -128,12 +133,23 @@ def ingest_events(connection, events: list[RawEvent]) -> None:
     sync_context_entities(connection, events)
 
 
+@dataclass
+class IngestionResult:
+    """Bundles reconciled memories with consolidation observability traces."""
+
+    memories: list[MemoryObject] = field(default_factory=list)
+    consolidation_traces: list[ConsolidationTrace] = field(default_factory=list)
+    pre_consolidation_count: int = 0
+    post_consolidation_count: int = 0
+    llm_pair_count: int = 0
+
+
 def extract_and_reconcile(
     connection,
     events: list[RawEvent],
     extractor: MemoryExtractor | None = None,
     reconciler: MemoryReconciler | None = None,
-) -> list[MemoryObject]:
+) -> IngestionResult:
     """Extract memories from bounded discussion windows and reconcile them."""
     extractor = extractor or MemoryExtractor()
     consolidator = MemoryConsolidator()
@@ -148,14 +164,23 @@ def extract_and_reconcile(
             )
         )
 
-    memories = consolidator.consolidate(memories)
+    pre_count = len(memories)
+    consolidation_result = consolidator.consolidate(memories)
+    memories = consolidation_result.memories
+    llm_count = sum(1 for t in consolidation_result.traces if t.filter_stage == "llm")
 
     reconciled_memories: list[MemoryObject] = []
     for memory in memories:
         reconciled_memory, _ = reconciler.reconcile(connection, memory)
         reconciled_memories.append(reconciled_memory)
 
-    return reconciled_memories
+    return IngestionResult(
+        memories=reconciled_memories,
+        consolidation_traces=consolidation_result.traces,
+        pre_consolidation_count=pre_count,
+        post_consolidation_count=len(memories),
+        llm_pair_count=llm_count,
+    )
 
 
 def group_events_by_stream(events: list[RawEvent]) -> list[list[RawEvent]]:
@@ -173,12 +198,18 @@ def _extract_stream_memories(
     *,
     extractor: MemoryExtractor,
 ) -> list[MemoryObject]:
-    """Extract memories for one stream using cursor-aware incremental windows."""
+    """Extract memories for one stream using cursor-aware incremental windows.
+
+    v2 pipeline: SessionTracker → WindowBuilder (with annotations) →
+    TopicTracker → ContextAssembler → Extractor.
+    """
     if not stream_events:
         return []
 
+    session_tracker = SessionTracker()
     window_builder = WindowBuilder()
     topic_tracker = TopicTracker()
+    context_assembler = ContextAssembler()
     project_id = stream_events[0].project_id
     chat_id = stream_events[0].chat_id
     cursor = get_processing_cursor(connection, project_id, chat_id)
@@ -193,16 +224,47 @@ def _extract_stream_memories(
     event_index = {event.event_id: event for event in combined_events}
     new_event_ids = {event.event_id for event in stream_events}
 
-    windows = window_builder.build_windows(combined_events)
+    topic_annotations = session_tracker.annotate_batch(combined_events)
+    annotation_index = {a.event_id: a for a in topic_annotations}
+
+    windows = window_builder.build_windows(combined_events, annotations=annotation_index)
+
     topic_assignments = assign_topics_for_windows(topic_tracker, windows)
-    merged_windows, merged_assignments = merge_windows_for_extraction(windows, topic_assignments, event_index)
-    selected_windows = [window for window in merged_windows if any(event_id in new_event_ids for event_id in window.event_ids)]
+    for window in windows:
+        assignment = topic_assignments.get(window.window_id)
+        if assignment and not window.topic_hint:
+            window.topic_hint = assignment.label
+
+    windows, topic_assignments = merge_same_topic_windows(
+        windows, topic_assignments, event_index
+    )
+
+    selected_windows = [
+        window for window in windows
+        if any(event_id in new_event_ids for event_id in window.event_ids)
+    ]
     selected_assignments = {
-        window.window_id: merged_assignments[window.window_id]
+        window.window_id: topic_assignments[window.window_id]
         for window in selected_windows
-        if window.window_id in merged_assignments
+        if window.window_id in topic_assignments
     }
-    extracted = extractor.extract_from_windows(selected_windows, event_index, selected_assignments)
+
+    existing_memories: list[MemoryObject] = []
+    try:
+        existing_memories = list_memories(connection, project_id=project_id, status="active")
+    except Exception:
+        pass
+
+    extraction_contexts = context_assembler.assemble(
+        selected_windows, event_index, existing_memories
+    )
+    ctx_index = {
+        ctx.current_window.window_id: ctx for ctx in extraction_contexts
+    }
+
+    extracted = extractor.extract_from_windows(
+        selected_windows, event_index, selected_assignments, extraction_contexts=ctx_index
+    )
 
     last_event = max(stream_events, key=lambda event: (event.transaction_time, event.event_id))
     upsert_processing_cursor(
@@ -241,6 +303,62 @@ def assign_topics_for_windows(
         assignments[window.window_id] = assignment
         previous_assignments.append(assignment)
     return assignments
+
+
+def merge_same_topic_windows(
+    windows: list[DiscussionWindow],
+    assignments: dict[str, TopicAssignment],
+    event_index: dict[str, RawEvent],
+) -> tuple[list[DiscussionWindow], dict[str, TopicAssignment]]:
+    """Merge non-adjacent windows that share the same topic label.
+
+    SessionTracker identifies A-B-A patterns. This step collects all windows
+    belonging to the same topic into a single extraction window so the LLM
+    sees the full topic context.
+    """
+    if not windows:
+        return [], {}
+
+    topic_groups: dict[str, list[DiscussionWindow]] = {}
+    topic_order: list[str] = []
+    for window in windows:
+        label = (window.topic_hint or "").strip()
+        if not label:
+            assignment = assignments.get(window.window_id)
+            label = assignment.label if assignment else ""
+        if label not in topic_groups:
+            topic_groups[label] = []
+            topic_order.append(label)
+        topic_groups[label].append(window)
+
+    merged_windows: list[DiscussionWindow] = []
+    merged_assignments: dict[str, TopicAssignment] = {}
+    for label in topic_order:
+        group = topic_groups[label]
+        if len(group) == 1:
+            merged_windows.append(group[0])
+            if group[0].window_id in assignments:
+                merged_assignments[group[0].window_id] = assignments[group[0].window_id]
+            continue
+
+        merged = merge_window_group(
+            group, event_index, split_reason="same_topic_merge"
+        )
+        best_assignment = max(
+            (assignments[w.window_id] for w in group if w.window_id in assignments),
+            key=lambda a: a.confidence,
+            default=None,
+        )
+        if best_assignment:
+            merged_assignments[merged.window_id] = TopicAssignment(
+                label=best_assignment.label,
+                confidence=best_assignment.confidence,
+                assignment_reason="same_topic_merge",
+                matched_markers=best_assignment.matched_markers,
+            )
+        merged_windows.append(merged)
+
+    return merged_windows, merged_assignments
 
 
 def merge_windows_for_extraction(

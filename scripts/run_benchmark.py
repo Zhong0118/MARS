@@ -3,8 +3,11 @@ from __future__ import annotations
 """Run lightweight local benchmarks for the MARS MVP."""
 
 import csv
+import gc
 import json
+import sqlite3
 import sys
+import time
 from pathlib import Path
 
 
@@ -13,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.core.ingestion import extract_and_reconcile, ingest_events
+from app.core.query_planner import QueryPlanner
 from app.core.retriever import MemoryRetriever
 from app.connectors.sample_loader import load_raw_events
 from app.storage.db import ensure_storage_dirs, get_connection, initialize_database, insert_benchmark_result
@@ -24,6 +28,20 @@ REPORT_MD = PROJECT_ROOT / "reports" / "benchmark_report.md"
 REPORT_CSV = PROJECT_ROOT / "reports" / "benchmark_results.csv"
 
 
+def reset_benchmark_db() -> None:
+    """Delete and re-create the benchmark database, handling Windows file locks."""
+    gc.collect()
+    for _ in range(5):
+        try:
+            if BENCHMARK_DB.exists():
+                BENCHMARK_DB.unlink()
+            break
+        except PermissionError:
+            gc.collect()
+            time.sleep(0.2)
+    initialize_database(BENCHMARK_DB)
+
+
 def load_json(path: Path) -> list[dict]:
     """Load one JSON array file."""
     with path.open("r", encoding="utf-8") as handle:
@@ -32,15 +50,15 @@ def load_json(path: Path) -> list[dict]:
 
 def run_anti_noise_case(case: dict) -> BenchmarkResult:
     """Benchmark whether the system still retrieves the target memory under noise."""
-    if BENCHMARK_DB.exists():
-        BENCHMARK_DB.unlink()
-    initialize_database(BENCHMARK_DB)
+    reset_benchmark_db()
     with get_connection(BENCHMARK_DB) as connection:
         ingest_events(connection, load_raw_events(PROJECT_ROOT / "data/sample_chats/project_day1_decision.json"))
         extract_and_reconcile(connection, load_raw_events(PROJECT_ROOT / "data/sample_chats/project_day1_decision.json"))
         ingest_events(connection, load_raw_events(PROJECT_ROOT / case["noise_file"]))
 
-    results = MemoryRetriever(top_k=3, db_path=BENCHMARK_DB).search(case["query"], project_id=case["project_id"])
+    planner = QueryPlanner()
+    plan = planner.plan(case["query"], top_k=3)
+    results = MemoryRetriever(top_k=3, db_path=BENCHMARK_DB).search(case["query"], project_id=case["project_id"], plan=plan)
     top_result = results[0] if results else None
     top_title = top_result.title if top_result else None
     top_content = (top_result.content or "").lower() if top_result else ""
@@ -66,15 +84,13 @@ def run_anti_noise_case(case: dict) -> BenchmarkResult:
 
 def run_conflict_case(case: dict) -> BenchmarkResult:
     """Benchmark whether supersede handling leaves the expected active memory."""
-    if BENCHMARK_DB.exists():
-        BENCHMARK_DB.unlink()
-    initialize_database(BENCHMARK_DB)
+    reset_benchmark_db()
     with get_connection(BENCHMARK_DB) as connection:
         ingest_events(connection, load_raw_events(PROJECT_ROOT / "data/sample_chats/project_day1_decision.json"))
         extract_and_reconcile(connection, load_raw_events(PROJECT_ROOT / "data/sample_chats/project_day1_decision.json"))
         ingest_events(connection, load_raw_events(PROJECT_ROOT / "data/sample_chats/conflict_update.json"))
-        memories = extract_and_reconcile(connection, load_raw_events(PROJECT_ROOT / "data/sample_chats/conflict_update.json"))
-        active_memory = memories[0] if memories else None
+        conflict_result = extract_and_reconcile(connection, load_raw_events(PROJECT_ROOT / "data/sample_chats/conflict_update.json"))
+        active_memory = conflict_result.memories[0] if conflict_result.memories else None
 
     active_title = active_memory.title if active_memory else None
     active_content = (active_memory.content or "").lower() if active_memory else ""
@@ -121,15 +137,13 @@ def run_efficiency_case(case: dict) -> BenchmarkResult:
 
 def run_mixed_topic_case(case: dict) -> BenchmarkResult:
     """Benchmark whether mixed-topic chats still retain a usable tech-route memory."""
-    if BENCHMARK_DB.exists():
-        BENCHMARK_DB.unlink()
-    initialize_database(BENCHMARK_DB)
+    reset_benchmark_db()
     with get_connection(BENCHMARK_DB) as connection:
         events = load_raw_events(PROJECT_ROOT / case["input_file"])
         ingest_events(connection, events)
-        memories = extract_and_reconcile(connection, events)
+        mixed_result = extract_and_reconcile(connection, events)
 
-    active_topics = [memory.topic for memory in memories if memory.status == "active"]
+    active_topics = [memory.topic for memory in mixed_result.memories if memory.status == "active"]
     tech_route_count = sum(1 for topic in active_topics if topic == case["expected_active_topic"])
     passed = tech_route_count >= 1
     return BenchmarkResult(
@@ -176,10 +190,6 @@ def run_all_benchmarks() -> dict:
     conflict_cases = load_json(PROJECT_ROOT / "data/benchmark/conflict_cases.json")
     efficiency_cases = load_json(PROJECT_ROOT / "data/benchmark/efficiency_cases.json")
     mixed_topic_cases = load_json(PROJECT_ROOT / "data/benchmark/mixed_topic_cases.json")
-
-    if BENCHMARK_DB.exists():
-        BENCHMARK_DB.unlink()
-    initialize_database(BENCHMARK_DB)
 
     results: list[BenchmarkResult] = []
     results.extend(run_anti_noise_case(case) for case in anti_noise_cases)

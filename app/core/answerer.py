@@ -39,7 +39,7 @@ class MemoryAnswerer:
     def select_primary(self, plan: QueryPlan, evidence: list[EvidencePack]) -> EvidencePack:
         """Pick the most suitable main memory for final answer composition."""
         def priority(item: EvidencePack) -> tuple[int, float]:
-            primary_type_score = 1 if memory_type_from_title(item.title, item.content) in plan.primary_types else 0
+            primary_type_score = 1 if item.memory_type in plan.primary_types else 0
             topic_score = 1 if item.topic == plan.normalized_topic else 0
             return (primary_type_score + topic_score, item.score)
 
@@ -126,15 +126,3 @@ class MemoryAnswerer:
             support_titles = [item.title for item in supporting[:2]]
             parts.append(f"Related timeline support: {', '.join(support_titles)}.")
         return parts
-
-
-def memory_type_from_title(title: str, content: str) -> str:
-    """Infer a coarse type hint from evidence text when type is not directly exposed."""
-    combined = f"{title} {content}".lower()
-    if any(keyword in combined for keyword in ["decide", "decision", "selected", "will use", "instead of"]):
-        return "decision"
-    if any(keyword in combined for keyword in ["risk", "failure", "blocker", "unstable"]):
-        return "risk"
-    if any(keyword in combined for keyword in ["required", "procedure", "fallback", "need to"]):
-        return "procedure"
-    return "fact"
